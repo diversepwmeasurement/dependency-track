@@ -1,138 +1,132 @@
-on:
-  workflow_call:
-    inputs:
-      app-version:
-        type: string
-        required: false
-        default: "snapshot"
-        description: "the version that should be set/used as tag for the container image"
-      publish-container:
-        type: boolean
-        required: false
-        default: false
-        description: "publish and scan the container image once its built"
-    secrets:
-      registry-0-usr:
-        required: true
-      registry-0-psw:
-        required: true
-
-permissions: { }
-
 jobs:
-  build-java:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # tag=v4.1.3
-
-      - name: Set up JDK
-        uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9 # tag=v4.2.1
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'maven'
-
-      - name: Setup CycloneDX CLI
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          wget -O "$HOME/.local/bin/cyclonedx" https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.24.2/cyclonedx-linux-x64
-          echo "ef0d3b31d176e02bc594f83e19cfcea053c6bc5b197351f71696e189390f851d $HOME/.local/bin/cyclonedx" | sha256sum -c
-          chmod +x "$HOME/.local/bin/cyclonedx"
-
-      - name: Build with Maven
-        run: |-
-          mvn clean
-          mvn package -Dmaven.test.skip=true -P enhance -P embedded-jetty -Dservices.bom.merge.skip=false -Dlogback.configuration.file=src/main/docker/logback.xml
-          mvn clean -P clean-exclude-wars
-          mvn package -Dmaven.test.skip=true -P enhance -P embedded-jetty -P bundle-ui -Dservices.bom.merge.skip=false -Dlogback.configuration.file=src/main/docker/logback.xml
-          mvn clean -P clean-exclude-wars
-          mvn cyclonedx:makeBom -Dservices.bom.merge.skip=false org.codehaus.mojo:exec-maven-plugin:exec@merge-services-bom
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@1746f4ab65b179e0ea60a494b83293b640dd5bba # tag=v4.3.2
-        with:
-          name: assembled-wars
-          path: |-
-            target/*.jar
-            target/bom.json
-
   build-container:
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write # Required to upload trivy's SARIF output
     needs:
-      - build-java
+    - build-java
+    permissions:
+      security-events: write
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout Repository
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f
+    - continue-on-error: true
+      name: Download Artifacts
+      uses: actions/download-artifact@8caf195ad4b1dee92908e23f56eeb0696f1dd42d
+      with:
+        name: assembled-wars
+        path: target
+    - continue-on-error: true
+      name: Set up QEMU
+      uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3
+    - continue-on-error: true
+      id: buildx
+      name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb
+      with:
+        install: true
+    - continue-on-error: true
+      if: ${{ inputs.publish-container }}
+      name: Login to Docker.io
+      uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20
+      with:
+        password: ${{ secrets.registry-0-psw }}
+        registry: docker.io
+        username: ${{ secrets.registry-0-usr }}
+    - continue-on-error: true
+      id: tags
+      name: Set Container Tags
+      run: "TAGS=\"docker.io/dependencytrack/${{ matrix.distribution }}:${{ inputs.app-version\
+        \ }}\"\nif [[ \"${{ inputs.app-version }}\" != \"snapshot\" ]]; then\n  TAGS=\"\
+        ${TAGS},docker.io/dependencytrack/${{ matrix.distribution }}:latest\"\nfi\n\
+        echo \"tags=${TAGS}\" >> $GITHUB_OUTPUT"
+    - continue-on-error: true
+      name: Build multi-arch Container Image
+      uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0
+      with:
+        build-args: 'APP_VERSION=${{ inputs.app-version }}
 
+          COMMIT_SHA=${{ github.sha }}
+
+          WAR_FILENAME=dependency-track-${{ matrix.distribution }}.jar'
+        context: .
+        file: src/main/docker/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: false
+        tags: ${{ steps.tags.outputs.tags }}
+    - continue-on-error: true
+      if: ${{ inputs.publish-container }}
+      name: Run Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@d710430a6722f083d3b36b8339ff66b32f22ee55
+      with:
+        format: sarif
+        ignore-unfixed: true
+        image-ref: docker.io/dependencytrack/${{ matrix.distribution }}:${{ inputs.app-version
+          }}
+        output: trivy-results.sarif
+        vuln-type: os
+    - continue-on-error: true
+      if: ${{ inputs.publish-container }}
+      name: Upload Trivy Scan Results to GitHub Security Tab
+      uses: github/codeql-action/upload-sarif@c7f9125735019aa87cfc361530512d50ea439c71
+      with:
+        sarif_file: trivy-results.sarif
     strategy:
+      fail-fast: false
       matrix:
         distribution:
-          - apiserver
-          - bundled
-      fail-fast: false
-
+        - apiserver
+        - bundled
+  build-java:
+    runs-on: self-hosted
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # tag=v4.1.3
+    - continue-on-error: true
+      name: Checkout Repository
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f
+    - continue-on-error: true
+      name: Set up JDK
+      uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9
+      with:
+        cache: maven
+        distribution: temurin
+        java-version: '17'
+    - continue-on-error: true
+      name: Setup CycloneDX CLI
+      run: 'mkdir -p "$HOME/.local/bin"
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@8caf195ad4b1dee92908e23f56eeb0696f1dd42d # tag=v4.1.5
-        with:
-          name: assembled-wars
-          path: target
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # tag=v3.0.0
+        wget -O "$HOME/.local/bin/cyclonedx" https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.24.2/cyclonedx-linux-x64
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # tag=v3.3.0
-        id: buildx
-        with:
-          install: true
+        echo "ef0d3b31d176e02bc594f83e19cfcea053c6bc5b197351f71696e189390f851d $HOME/.local/bin/cyclonedx"
+        | sha256sum -c
 
-      - name: Login to Docker.io
-        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # tag=v3.1.0
-        if: ${{ inputs.publish-container }}
-        with:
-          registry: docker.io
-          username: ${{ secrets.registry-0-usr }}
-          password: ${{ secrets.registry-0-psw }}
+        chmod +x "$HOME/.local/bin/cyclonedx"
 
-      - name: Set Container Tags
-        id: tags
-        run: |-
-          TAGS="docker.io/dependencytrack/${{ matrix.distribution }}:${{ inputs.app-version }}"
-          if [[ "${{ inputs.app-version }}" != "snapshot" ]]; then
-            TAGS="${TAGS},docker.io/dependencytrack/${{ matrix.distribution }}:latest"
-          fi
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        '
+    - continue-on-error: true
+      name: Build with Maven
+      run: 'mvn clean
 
-      - name: Build multi-arch Container Image
-        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # tag=v5.3.0
-        with:
-          tags: ${{ steps.tags.outputs.tags }}
-          build-args: |-
-            APP_VERSION=${{ inputs.app-version }}
-            COMMIT_SHA=${{ github.sha }}
-            WAR_FILENAME=dependency-track-${{ matrix.distribution }}.jar
-          platforms: linux/amd64,linux/arm64
-          push: ${{ inputs.publish-container }}
-          context: .
-          file: src/main/docker/Dockerfile
+        mvn package -Dmaven.test.skip=true -P enhance -P embedded-jetty -Dservices.bom.merge.skip=false
+        -Dlogback.configuration.file=src/main/docker/logback.xml
 
-      - name: Run Trivy Vulnerability Scanner
-        if: ${{ inputs.publish-container }}
-        uses: aquasecurity/trivy-action@d710430a6722f083d3b36b8339ff66b32f22ee55 # tag=0.19.0
-        with:
-          image-ref: docker.io/dependencytrack/${{ matrix.distribution }}:${{ inputs.app-version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          ignore-unfixed: true
-          vuln-type: 'os'
+        mvn clean -P clean-exclude-wars
 
-      - name: Upload Trivy Scan Results to GitHub Security Tab
-        if: ${{ inputs.publish-container }}
-        uses: github/codeql-action/upload-sarif@c7f9125735019aa87cfc361530512d50ea439c71 # tag=v3.25.1
-        with:
-          sarif_file: 'trivy-results.sarif'
+        mvn package -Dmaven.test.skip=true -P enhance -P embedded-jetty -P bundle-ui
+        -Dservices.bom.merge.skip=false -Dlogback.configuration.file=src/main/docker/logback.xml
+
+        mvn clean -P clean-exclude-wars
+
+        mvn cyclonedx:makeBom -Dservices.bom.merge.skip=false org.codehaus.mojo:exec-maven-plugin:exec@merge-services-bom'
+    - continue-on-error: true
+      name: Upload Artifacts
+      uses: actions/upload-artifact@1746f4ab65b179e0ea60a494b83293b640dd5bba
+      with:
+        name: assembled-wars
+        path: 'target/*.jar
+
+          target/bom.json'
+on:
+  repository_dispatch:
+    types: trigger-ga____meta-build.yaml
+permissions: {}

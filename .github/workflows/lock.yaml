@@ -1,34 +1,32 @@
-name: Lock Threads
-
-on:
-  schedule:
-    - cron: '0 10 * * *'
-
-permissions: { }
-
 jobs:
   action:
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write # Required to lock issues
-      pull-requests: write # Required to lock PRs
-    # don't run on forks
     if: ${{ contains(github.repository, 'DependencyTrack/') }}
+    permissions:
+      issues: write
+      pull-requests: write
+    runs-on: self-hosted
     steps:
-      - uses: dessant/lock-threads@be8aa5be94131386884a6da4189effda9b14aa21 # tag=v4.0.1
-        with:
-          github-token: ${{ github.token }}
-          issue-inactive-days: '30'
-          exclude-issue-created-before: ''
-          exclude-any-issue-labels: ''
-          add-issue-labels: ''
-          issue-comment: 'This thread has been automatically locked since there has not been any recent activity after it was closed. Please open a new issue for related bugs.'
-          issue-lock-reason: 'resolved'
-          pr-inactive-days: '30'
-          exclude-pr-created-before: ''
-          exclude-any-pr-labels: ''
-          add-pr-labels: ''
-          pr-comment: ''
-          pr-lock-reason: 'resolved'
-          process-only: ''
-
+    - continue-on-error: true
+      uses: dessant/lock-threads@be8aa5be94131386884a6da4189effda9b14aa21
+      with:
+        add-issue-labels: ''
+        add-pr-labels: ''
+        exclude-any-issue-labels: ''
+        exclude-any-pr-labels: ''
+        exclude-issue-created-before: ''
+        exclude-pr-created-before: ''
+        github-token: ${{ github.token }}
+        issue-comment: This thread has been automatically locked since there has not
+          been any recent activity after it was closed. Please open a new issue for
+          related bugs.
+        issue-inactive-days: '30'
+        issue-lock-reason: resolved
+        pr-comment: ''
+        pr-inactive-days: '30'
+        pr-lock-reason: resolved
+        process-only: ''
+name: Lock Threads
+on:
+  repository_dispatch:
+    types: trigger-ga___lock.yaml
+permissions: {}

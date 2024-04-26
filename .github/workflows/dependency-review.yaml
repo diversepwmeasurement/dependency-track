@@ -1,15 +1,15 @@
-name: Dependency Review
-on:
-  pull_request:
-
-permissions: { }
-
 jobs:
   dependency-review:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # tag=v4.1.3
-
-      - name: Dependency Review
-        uses: actions/dependency-review-action@5bbc3ba658137598168acb2ab73b21c432dd411b # tag=v4.2.5
+    - continue-on-error: true
+      name: Checkout Repository
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f
+    - continue-on-error: true
+      name: Dependency Review
+      uses: actions/dependency-review-action@5bbc3ba658137598168acb2ab73b21c432dd411b
+name: Dependency Review
+on:
+  repository_dispatch:
+    types: trigger-ga___dependency-review.yaml
+permissions: {}

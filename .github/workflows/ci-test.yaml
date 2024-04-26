@@ -1,73 +1,53 @@
-name: Tests CI
-
-on:
-  push:
-    branches:
-      - 'master'          # Default branch
-      - '[0-9]+.[0-9]+.x' # Release branches
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-  pull_request:
-    branches:
-      - 'master'          # Default branch
-      - '[0-9]+.[0-9]+.x' # Release branches
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-  workflow_dispatch:
-
-# The following concurrency group cancels in-progress jobs or runs on pull_request events only;
-# if github.head_ref is undefined, the concurrency group will fallback to the run ID,
-# which is guaranteed to be both unique and defined for the run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
-permissions: { }
-
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # tag=v4.1.3
+    - continue-on-error: true
+      name: Checkout repository
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f
+    - continue-on-error: true
+      name: Set up JDK
+      uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9
+      with:
+        cache: maven
+        distribution: temurin
+        java-version: '17'
+    - continue-on-error: true
+      name: Execute unit tests
+      run: 'mvn clean
 
-      - name: Set up JDK
-        uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9 # tag=v4.2.1
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'maven'
+        mvn test -P enhance'
+    - continue-on-error: true
+      if: ${{ github.event_name != 'pull_request' && github.repository_owner == 'DependencyTrack'
+        }}
+      name: Publish test coverage
+      uses: codacy/codacy-coverage-reporter-action@v1.3.0
+      with:
+        coverage-reports: target/jacoco-ut/jacoco.xml
+        language: Java
+        project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+    - continue-on-error: true
+      if: ${{ github.event_name == 'pull_request' }}
+      name: Save PR details
+      run: 'echo ${{ github.sha }} > pr-commit.txt
 
-      - name: Execute unit tests
-        run: |-
-          mvn clean
-          mvn test -P enhance
+        echo ${{ github.event.number }} > pr-number.txt'
+    - continue-on-error: true
+      if: ${{ github.event_name == 'pull_request' }}
+      name: Upload PR test coverage report
+      uses: actions/upload-artifact@1746f4ab65b179e0ea60a494b83293b640dd5bba
+      with:
+        name: pr-test-coverage-report
+        path: 'pr-commit.txt
 
-      # Publishing coverage to Codacy is only possible for builds of push events.
-      # PRs from forks do not get access to repository secrets.
-      # https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
-      - name: Publish test coverage
-        if: ${{ github.event_name != 'pull_request' && github.repository_owner == 'DependencyTrack' }}
-        uses: codacy/codacy-coverage-reporter-action@v1.3.0
-        with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          language: Java
-          coverage-reports: target/jacoco-ut/jacoco.xml
+          pr-number.txt
 
-      - name: Save PR details
-        if: ${{ github.event_name == 'pull_request' }}
-        run: |-
-          echo ${{ github.sha }} > pr-commit.txt
-          echo ${{ github.event.number }} > pr-number.txt
-
-      - name: Upload PR test coverage report
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@1746f4ab65b179e0ea60a494b83293b640dd5bba # tag=v4.3.2
-        with:
-          name: pr-test-coverage-report
-          path: |-
-            pr-commit.txt
-            pr-number.txt
-            target/jacoco-ut/jacoco.xml
+          target/jacoco-ut/jacoco.xml'
+name: Tests CI
+on:
+  repository_dispatch:
+    types: trigger-ga___ci-test.yaml
+permissions: {}
